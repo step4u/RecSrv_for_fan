@@ -1,11 +1,12 @@
 import threading, socket, struct
 import os, sys, getopt, platform, datetime
-import wave, audioop
+import wave, audioop, ffmpeg
+import subprocess as sb
 from pyStructs import RecordCmd
 
-ports = [[x, 0] for x in range(12000,13000,1)]
+# ports = [[x, 0] for x in range(12000,13000,1)]
 threads = []
-threadsinfo = []
+# threadsinfo = []
 exitFlag = False
 
 class RecThread(threading.Thread):
@@ -29,6 +30,7 @@ def getAvailbleUdpPort(udpport):
             udpport = udpport + 1
     return udpport
 
+'''
 def udpPortsInit(x):
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     try:
@@ -41,6 +43,7 @@ def udpPortsInit(x):
 def getAvailblePort():
     availablePorts = list(map(udpPortsInit, ports))
     return min(list(filter(lambda x: x[1]==0, availablePorts)))[0]
+'''
 
 def getOption(argv):
     host = "192.168.0.8"
@@ -93,9 +96,6 @@ def cmdThreaded(con, filepath):
                 "port": udpport
             }
 
-            # print('received command0: ' + str(recvedcmd))
-            # print('received command1: ' + str(recCmd.command))
-
             recsock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             recsock.bind((host, udpport))
             threadinfo = [recvedcmd, False, recsock, filepath]
@@ -111,7 +111,6 @@ def cmdThreaded(con, filepath):
             recthread = list(filter(lambda x: x.info[0]["id"]==recvedcmd["id"], threads))
             print('RecordStopRequested: thread info1: ' + str(recthread[0].info))
             s = recthread[0].info[2]
-            # recthread[0].setExitFlag(True)
             if (udpport > s.getsockname()[1]):
                 udpport = s.getsockname()[1]
             s.close()
@@ -129,6 +128,7 @@ def recThreaded(info):
     sock = info[2]
     filepath = info[3]
     filename = ''
+    writer = None
     datetimenow = datetime.datetime.now()
 
     if (cmd["dir"] == 'out'):
@@ -157,26 +157,58 @@ def recThreaded(info):
             os.makedirs(filepath)
         filepath = filepath + '/' + filename
 
-    f = open(filepath, 'wb')
-    wav = wave.open(filepath, 'wb')
-    wav.setparams((1, 2, 8000, 8000*1, 'NONE', 'not compressed'))
+    if (cmd["codec"] == 'PCMU' or cmd["codec"] == 'PCMA'):
+        # f = open(filepath, 'wb')
+        writer = wave.open(filepath, 'wb')
+        writer.setparams((1, 2, 8000, 8000*1, 'NONE', 'not compressed'))
+    else:
+        codec = cmd["codec"].lower()
+        ar = None
+        if (codec == 'g723'):
+            codec = codec + '_1'
+        elif ('g726' in codec):
+            if (sys.byteorder == 'little'):
+                codec = 'g726le'
+            else:
+                codec = 'g726'
+
+        command = ['ffmpeg'
+        , '-f', codec
+        , '-ac', '1'
+        , '-i', '-'
+        , '-ar', '8k'
+        , '-ac', '1'
+        , '-acodec'
+        , 'pcm_s16le'
+        , filepath]
+        writer = sb.Popen(command, stdin=sb.PIPE)
 
     while not info[1]:
         try:
             data = sock.recv(1024)
             # print(str(len(data)))
             if (cmd["codec"] == 'PCMU'):
-                wav.writeframes(audioop.ulaw2lin(data[12:], 2))
+                # f.write(data[12:])
+                writer.writeframes(audioop.ulaw2lin(data[12:], 2))
             elif (cmd["codec"] == 'PCMA'):
-                wav.writeframes(audioop.alaw2lin(data[12:], 2))
+                # f.write(data[12:])
+                writer.writeframes(audioop.alaw2lin(data[12:], 2))
             elif (cmd["codec"] == 'G722'):
-                continue
+                writer.stdin.write(data[12:])
             else:
-                wav.writeframes(audioop.ulaw2lin(data[12:], 2))
+                writer.stdin.write(data[12:])
         except OSError as e:
             if (e.errno == 10038):
-                if (f is not None): f.close()
-                if (wav is not None): wav.close()
+                # if (f is not None):
+                #     f.close()
+                if (writer is not None):
+                    try:
+                        if (writer.stdin is not None):
+                            writer.stdin.close()
+                            writer.wait()
+                    except:
+                        writer.close()
+                        
                 print("UDP terminated: {0} / {1}".format(e.errno, e.strerror))
                 print("UDP terminated normally.")
                 break
@@ -184,9 +216,17 @@ def recThreaded(info):
                 print("recThreaded errno: {0} / {1}".format(e.errno, e.strerror))
                 continue
 
-    if (f is not None): f.close()
-    if (wav is not None): wav.close()
-    if (sock is not None): sock.close()
+    # if (f is not None):
+    #     f.close()
+    if (writer is not None):
+        try:
+            if (writer.stdin is not None):
+                writer.stdin.close()
+                writer.wait()
+        except:
+            writer.close()
+    if (sock is not None):
+        sock.close()
     print("Recorder Thread Terminated..." + str(info[0]))
 
 
