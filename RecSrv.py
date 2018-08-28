@@ -1,6 +1,6 @@
 import threading, socket, struct
 import os, sys, getopt, platform, datetime
-import wave, audioop, ffmpeg
+import wave, audioop
 import subprocess as sb
 from pyStructs import RecordCmd
 
