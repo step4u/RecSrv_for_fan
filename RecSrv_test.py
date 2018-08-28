@@ -4,9 +4,9 @@ import wave, audioop, ffmpeg
 import subprocess as sb
 from pyStructs import RecordCmd
 
-ports = [[x, 0] for x in range(12000,13000,1)]
+# ports = [[x, 0] for x in range(12000,13000,1)]
 threads = []
-threadsinfo = []
+# threadsinfo = []
 exitFlag = False
 
 class RecThread(threading.Thread):
@@ -30,6 +30,7 @@ def getAvailbleUdpPort(udpport):
             udpport = udpport + 1
     return udpport
 
+'''
 def udpPortsInit(x):
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     try:
@@ -42,6 +43,7 @@ def udpPortsInit(x):
 def getAvailblePort():
     availablePorts = list(map(udpPortsInit, ports))
     return min(list(filter(lambda x: x[1]==0, availablePorts)))[0]
+'''
 
 def getOption(argv):
     host = "192.168.0.8"
