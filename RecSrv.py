@@ -285,8 +285,8 @@ while not exitFlag:
         print("RecSrv terminated as a unexpected reason.")
     '''
 
-# for thread in threads:
-#     thread.join()
+for thread in threads:
+    thread.join()
 
 print("Terminated main thread.")
 
