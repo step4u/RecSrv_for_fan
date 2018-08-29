@@ -17,6 +17,15 @@ class RecThread(threading.Thread):
         recThreaded(self.info)
     def setExitFlag(self, flag):
         self.info[1] = flag
+    def force2terminate(self):
+        try:
+            if self.isAlive():
+                self.info[2].settimeout(2)
+                self.info[2].close()
+                self.info[1] = True
+                # raise threading.ThreadError("The tread will be terminated.")
+        except:
+            pass
 
 def getAvailbleUdpPort(udpport):
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -46,14 +55,15 @@ def getAvailblePort():
 '''
 
 def getOption(argv):
-    host = "192.168.0.8"
+    # host = socket.gethostname()
+    host = '192.168.0.23'
     port = 10000
     listen = 10
     filepath = os.getenv("HOME")
     if (platform.system() == "Windows"):
         filepath = os.getenv("APPDATA") + "\\Fanvil\\recorded"
     else:
-        filepath = os.getenv("HOME") + "/.fanvil/recorded"
+        filepath = os.getenv("HOME") + "/fanvil/recorded"
 
     try:
         opts, args = getopt.getopt(argv,"?h:p:l:f:",["host=","port=", "listen=", "filepath="])
@@ -97,6 +107,7 @@ def cmdThreaded(con, filepath):
             }
 
             recsock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            # recsock.settimeout(10)
             recsock.bind((host, udpport))
             threadinfo = [recvedcmd, False, recsock, filepath]
 
@@ -110,10 +121,11 @@ def cmdThreaded(con, filepath):
             print("RecordStopRequested")
             recthread = list(filter(lambda x: x.info[0]["id"]==recvedcmd["id"], threads))
             print('RecordStopRequested: thread info1: ' + str(recthread[0].info))
-            s = recthread[0].info[2]
-            if (udpport > s.getsockname()[1]):
-                udpport = s.getsockname()[1]
-            s.close()
+            print('udpport: ' + str(udpport) + ' / ' + 'socketPort: ' + str(recthread[0].info[2].getsockname()[1]))
+            if (udpport > recthread[0].info[2].getsockname()[1]):
+                udpport = recthread[0].info[2].getsockname()[1]
+            print('udpport: ' + str(udpport) + ' / ' + 'socketPort: ' + str(recthread[0].info[2].getsockname()[1]))
+            recthread[0].force2terminate()
             print('RecordStopRequested: thread info2: ' + str(recthread[0].info))
             threads.remove(recthread[0])
             print('RecordStopRequested: threads: ' + str(threads))
@@ -125,7 +137,6 @@ def cmdThreaded(con, filepath):
 
 def recThreaded(info):
     cmd = info[0]
-    sock = info[2]
     filepath = info[3]
     filename = ''
     writer = None
@@ -184,8 +195,22 @@ def recThreaded(info):
         writer = sb.Popen(command, stdin=sb.PIPE)
 
     while not info[1]:
+        '''
+        data = info[2].recv(1024)
+        # print(str(len(data)))
+        if (cmd["codec"] == 'PCMU'):
+            # f.write(data[12:])
+            writer.writeframes(audioop.ulaw2lin(data[12:], 2))
+        elif (cmd["codec"] == 'PCMA'):
+            # f.write(data[12:])
+            writer.writeframes(audioop.alaw2lin(data[12:], 2))
+        elif (cmd["codec"] == 'G722'):
+            writer.stdin.write(data[12:])
+        else:
+            writer.stdin.write(data[12:])
+        '''
         try:
-            data = sock.recv(1024)
+            data = info[2].recv(1024)
             # print(str(len(data)))
             if (cmd["codec"] == 'PCMU'):
                 # f.write(data[12:])
@@ -198,9 +223,11 @@ def recThreaded(info):
             else:
                 writer.stdin.write(data[12:])
         except OSError as e:
+            print('UDP socket status: ' + e.strerror)
             if (e.errno == 10038):
                 # if (f is not None):
                 #     f.close()
+                print('Check writer status: ' + str(writer is None))
                 if (writer is not None):
                     try:
                         if (writer.stdin is not None):
@@ -225,8 +252,8 @@ def recThreaded(info):
                 writer.wait()
         except:
             writer.close()
-    if (sock is not None):
-        sock.close()
+    if (info[2] is not None):
+        info[2].close()
     print("Recorder Thread Terminated..." + str(info[0]))
 
 
@@ -235,10 +262,20 @@ host, port, listen, filepath = getOption(sys.argv[1:])
 print('Initialized Options: {0}/{1}/{2}/{3}'.format(host, port, listen, filepath))
 
 s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-s.bind((host, port))
-s.listen(listen)
+try:
+    s.bind((host, port))
+    s.listen(listen)
+except OSError as e:
+    if (e.errno == 99):
+        print('Local Network Error: {0}'.format(e.strerror))
+        sys.exit()
 
 while not exitFlag:
+    con, addr = s.accept()
+    print('Got connection from', addr)
+    threading.Thread(target=cmdThreaded, args=(con,filepath,)).start()
+
+    '''
     try:
         con, addr = s.accept()
         print('Got connection from', addr)
@@ -246,9 +283,10 @@ while not exitFlag:
     except:
         exitFlag = True
         print("RecSrv terminated as a unexpected reason.")
+    '''
 
-for thread in threads:
-    thread.join()
+# for thread in threads:
+#     thread.join()
 
 print("Terminated main thread.")
 
