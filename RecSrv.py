@@ -169,12 +169,12 @@ def recThreaded(info):
             os.makedirs(filepath)
         filepath = filepath + '/' + filename
 
-    if (cmd["codec"] == 'PCMU' or cmd["codec"] == 'PCMA'):
-        # f = open(filepath, 'wb')
+    codec = cmd["codec"].lower()
+
+    if (codec == 'pcmu' or codec == 'pcma'):
         writer = wave.open(filepath, 'wb')
         writer.setparams((1, 2, 8000, 8000*1, 'NONE', 'not compressed'))
     else:
-        codec = cmd["codec"].lower()
         ecodec = 'pcm_s16le'
         if (sys.byteorder == 'big'):
             ecodec = 'pcm_s16be'
@@ -220,21 +220,16 @@ def recThreaded(info):
             data = info[2].recv(1024)
             if (len(data) < 1):
                 break
-            if (cmd["codec"] == 'PCMU'):
-                # f.write(data[12:])
+            if (codec == 'pcmu'):
                 writer.writeframes(audioop.ulaw2lin(data[12:], 2))
-            elif (cmd["codec"] == 'PCMA'):
-                # f.write(data[12:])
+            elif (codec == 'pcma'):
                 writer.writeframes(audioop.alaw2lin(data[12:], 2))
-            elif (cmd["codec"] == 'G722'):
-                writer.stdin.write(data[12:])
             else:
+                # G722, G723, G726-32
                 writer.stdin.write(data[12:])
         except OSError as e:
             print('UDP socket status: ' + e.strerror)
             if (e.errno == 10038):
-                # if (f is not None):
-                #     f.close()
                 print('Check writer status: ' + str(writer is None))
                 try:
                     writer.stdin.close()
@@ -242,7 +237,6 @@ def recThreaded(info):
                 except:
                     if (writer is not None):
                         writer.close()
-                        
                 print("UDP terminated: {0} / {1}".format(e.errno, e.strerror))
                 print("UDP terminated normally.")
                 break
@@ -250,8 +244,6 @@ def recThreaded(info):
                 print("recThreaded errno: {0} / {1}".format(e.errno, e.strerror))
                 continue
 
-    # if (f is not None):
-    #     f.close()
     try:
         writer.stdin.close()
         writer.wait()
