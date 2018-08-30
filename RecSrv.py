@@ -20,9 +20,9 @@ class RecThread(threading.Thread):
     def force2terminate(self):
         try:
             if self.isAlive():
-                self.info[2].settimeout(2)
-                self.info[2].close()
                 self.info[1] = True
+                self.info[2].shutdown(socket.SHUT_RD)
+                self.info[2].close()
                 # raise threading.ThreadError("The tread will be terminated.")
         except:
             pass
@@ -120,16 +120,17 @@ def cmdThreaded(con, filepath):
         elif (recCmd.command["cmd"] == "RecordStopRequest"):
             print("RecordStopRequested")
             recthread = list(filter(lambda x: x.info[0]["id"]==recvedcmd["id"], threads))
-            print('RecordStopRequested: thread info1: ' + str(recthread[0].info))
-            print('udpport: ' + str(udpport) + ' / ' + 'socketPort: ' + str(recthread[0].info[2].getsockname()[1]))
+            # print('RecordStopRequested: thread info1: ' + str(recthread[0].info))
+            # print('udpport: ' + str(udpport) + ' / ' + 'socketPort: ' + str(recthread[0].info[2].getsockname()[1]))
             if (udpport > recthread[0].info[2].getsockname()[1]):
                 udpport = recthread[0].info[2].getsockname()[1]
             print('udpport: ' + str(udpport) + ' / ' + 'socketPort: ' + str(recthread[0].info[2].getsockname()[1]))
             recthread[0].force2terminate()
-            print('RecordStopRequested: thread info2: ' + str(recthread[0].info))
+            # print('RecordStopRequested: thread info2: ' + str(recthread[0].info))
             threads.remove(recthread[0])
-            print('RecordStopRequested: threads: ' + str(threads))
+            # print('RecordStopRequested: threads: ' + str(threads))
             print('RecordStopRequested: udpport: ' + str(udpport))
+            recthread[0].join()
             break
 
     con.close()
@@ -174,7 +175,10 @@ def recThreaded(info):
         writer.setparams((1, 2, 8000, 8000*1, 'NONE', 'not compressed'))
     else:
         codec = cmd["codec"].lower()
-        ar = None
+        ecodec = 'pcm_s16le'
+        if (sys.byteorder == 'big'):
+            ecodec = 'pcm_s16be'
+        # ar = None
         if (codec == 'g723'):
             codec = codec + '_1'
         elif ('g726' in codec):
@@ -183,6 +187,9 @@ def recThreaded(info):
             else:
                 codec = 'g726'
 
+        #-nostats -loglevel 0
+        # , '-nostats'
+        # , '-loglevel', '0'
         command = ['ffmpeg'
         , '-f', codec
         , '-ac', '1'
@@ -190,7 +197,7 @@ def recThreaded(info):
         , '-ar', '8k'
         , '-ac', '1'
         , '-acodec'
-        , 'pcm_s16le'
+        , ecodec
         , filepath]
         writer = sb.Popen(command, stdin=sb.PIPE)
 
@@ -211,7 +218,8 @@ def recThreaded(info):
         '''
         try:
             data = info[2].recv(1024)
-            # print(str(len(data)))
+            if (len(data) < 1):
+                break
             if (cmd["codec"] == 'PCMU'):
                 # f.write(data[12:])
                 writer.writeframes(audioop.ulaw2lin(data[12:], 2))
@@ -228,12 +236,11 @@ def recThreaded(info):
                 # if (f is not None):
                 #     f.close()
                 print('Check writer status: ' + str(writer is None))
-                if (writer is not None):
-                    try:
-                        if (writer.stdin is not None):
-                            writer.stdin.close()
-                            writer.wait()
-                    except:
+                try:
+                    writer.stdin.close()
+                    writer.wait()
+                except:
+                    if (writer is not None):
                         writer.close()
                         
                 print("UDP terminated: {0} / {1}".format(e.errno, e.strerror))
@@ -245,12 +252,11 @@ def recThreaded(info):
 
     # if (f is not None):
     #     f.close()
-    if (writer is not None):
-        try:
-            if (writer.stdin is not None):
-                writer.stdin.close()
-                writer.wait()
-        except:
+    try:
+        writer.stdin.close()
+        writer.wait()
+    except:
+        if (writer is not None):
             writer.close()
     if (info[2] is not None):
         info[2].close()
