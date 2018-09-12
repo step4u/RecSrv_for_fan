@@ -116,9 +116,10 @@ def cmdThreaded(con, filepath):
             threads.append(recthread)
             
             con.send(recCmd.serialize().encode())
-            print("sent: " + recCmd.serialize())
+            print("sent RecordStartResponse: " + recCmd.serialize())
         elif (recCmd.command["cmd"] == "RecordStopRequest"):
             print("RecordStopRequested")
+
             recthread = list(filter(lambda x: x.info[0]["id"]==recvedcmd["id"], threads))
             # print('RecordStopRequested: thread info1: ' + str(recthread[0].info))
             # print('udpport: ' + str(udpport) + ' / ' + 'socketPort: ' + str(recthread[0].info[2].getsockname()[1]))
@@ -131,6 +132,15 @@ def cmdThreaded(con, filepath):
             # print('RecordStopRequested: threads: ' + str(threads))
             print('RecordStopRequested: udpport: ' + str(udpport))
             recthread[0].join()
+
+            ### Send RecordStopResponse
+            recCmd.command = {
+                "cmd": "RecordStopResponse",
+                "id": recvedcmd["id"],
+                "result": "success",
+            }
+            con.send(recCmd.serialize().encode())
+            print("sent RecordStopResponse: " + recCmd.serialize())
             break
 
     con.close()
