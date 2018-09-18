@@ -1,6 +1,8 @@
 import threading, socket, struct
 import os, sys, getopt, platform, datetime
 import wave, audioop
+import mysql.connector
+from mysql.connector import errorcode
 import subprocess as sb
 from pyStructs import RecordCmd
 
@@ -60,19 +62,21 @@ def getOption(argv):
     port = 10000
     listen = 10
     filepath = os.getenv("HOME")
+    dbhost = '192.168.0.18'
     if (platform.system() == "Windows"):
         filepath = os.getenv("APPDATA") + "\\Fanvil\\recorded"
     else:
         filepath = os.getenv("HOME") + "/fanvil/recorded"
 
     try:
-        opts, args = getopt.getopt(argv,"?h:p:l:f:",["host=","port=", "listen=", "filepath="])
+        opts, args = getopt.getopt(argv,"?h:p:l:f:db:",["host=","port=", "listen=", "filepath=", "dbhost="])
     except getopt.GetoptError:
-        print('-h <host> -p <port> -l <number>')
+        print('Usage : -h <host> -p <port> -l <number> -f <savepath> -db <dbhost>')
         sys.exit(2)
     for opt, arg in opts:
         if opt in ("-?", "--help"):
-            print('-h <host> -p <port> -l <number>')
+            print('Usage : -h <host> -p <port> -l <number> -f <savepath> -db <dbhost>')
+            print('Default save path is "{0}"'.format(filepath))
             sys.exit()
         elif opt in ("-h", "--host"):
             host = arg
@@ -82,9 +86,11 @@ def getOption(argv):
             listen = int(arg)
         elif opt in ("-f", "--filepath"):
             filepath = arg
-    return host, port, listen, filepath
+        elif opt in ("-db", "--dbhost"):
+            dbhost = arg
+    return host, port, listen, filepath, dbhost
 
-def cmdThreaded(con, filepath):
+def cmdThreaded(con, filepath, dbhost):
     udpport = 41000
 
     while True:
@@ -107,7 +113,7 @@ def cmdThreaded(con, filepath):
             }
 
             recsock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            # recsock.settimeout(10)
+            # recsock.settimeout(60)
             recsock.bind((host, udpport))
             threadinfo = [recvedcmd, False, recsock, filepath]
 
@@ -120,27 +126,61 @@ def cmdThreaded(con, filepath):
         elif (recCmd.command["cmd"] == "RecordStopRequest"):
             print("RecordStopRequested")
 
-            recthread = list(filter(lambda x: x.info[0]["id"]==recvedcmd["id"], threads))
-            # print('RecordStopRequested: thread info1: ' + str(recthread[0].info))
-            # print('udpport: ' + str(udpport) + ' / ' + 'socketPort: ' + str(recthread[0].info[2].getsockname()[1]))
-            if (udpport > recthread[0].info[2].getsockname()[1]):
-                udpport = recthread[0].info[2].getsockname()[1]
-            print('udpport: ' + str(udpport) + ' / ' + 'socketPort: ' + str(recthread[0].info[2].getsockname()[1]))
-            recthread[0].force2terminate()
-            # print('RecordStopRequested: thread info2: ' + str(recthread[0].info))
-            threads.remove(recthread[0])
-            # print('RecordStopRequested: threads: ' + str(threads))
-            print('RecordStopRequested: udpport: ' + str(udpport))
-            recthread[0].join()
-
-            ### Send RecordStopResponse
-            recCmd.command = {
+            recCmdRes = RecordCmd()
+            recCmdRes.command = {
                 "cmd": "RecordStopResponse",
                 "id": recvedcmd["id"],
                 "result": "success",
             }
-            con.send(recCmd.serialize().encode())
-            print("sent RecordStopResponse: " + recCmd.serialize())
+
+            recthread = list(filter(lambda x: x.info[0]["id"]==recvedcmd["id"], threads))
+            if (udpport > recthread[0].info[2].getsockname()[1]):
+                udpport = recthread[0].info[2].getsockname()[1]
+            oldcmd = recthread[0].info[0]
+
+            savepath = recthread[0].info[3].replace("\\", "/")
+            savefilename = recthread[0].info[4]
+
+            recthread[0].force2terminate()
+            recthread[0].join()
+            threads.remove(recthread[0])
+            # print('RecordStopRequested: udpport: ' + str(udpport))
+
+            dbconfig = {
+                'host':dbhost,
+                'user':'fanvilkr',
+                'password':'fanvilkrAs!',
+                'database':'fanvilrecord'
+            }
+
+            cnx = cur = None
+            try:
+                cnx = mysql.connector.connect(**dbconfig)
+            except mysql.connector.Error as err:
+                if err.errno == errorcode.ER_ACCESS_DENIED_ERROR:
+                    print('Something is wrong with your user name or password.')
+                elif err.errno == errorcode.ER_BAD_DB_ERROR:
+                    print('Database does not exist')
+                else:
+                    print(err)
+            else:
+                try:
+                    sql = "insert into record (direction, mac, remote_number, remote_name, local_number, local_name, savepath, filename) values ('{0}', '{1}', '{2}', '{3}', '{4}', '{5}', '{6}', '{7}')".format(oldcmd["dir"], oldcmd["device"], oldcmd["remote_number"], oldcmd["remote_name"], oldcmd["local_number"], oldcmd["local_name"], savepath, savefilename)
+                    cur = cnx.cursor()
+                    cur.execute(sql)
+                    cnx.commit()
+                except mysql.connector.Error as err:
+                    cnx.rollback()
+                    print("Database err: " + err.msg)
+            finally:
+                if cur:
+                    cur.close()
+                if cnx:
+                    cnx.close()
+                
+            ### Send RecordStopResponse
+            con.send(recCmdRes.serialize().encode())
+            print("sent RecordStopResponse: " + recCmdRes.serialize())
             break
 
     con.close()
@@ -150,6 +190,7 @@ def recThreaded(info):
     cmd = info[0]
     filepath = info[3]
     filename = ''
+    info.append(filename)
     writer = None
     datetimenow = datetime.datetime.now()
 
@@ -168,16 +209,21 @@ def recThreaded(info):
             + '_' + datetimenow.strftime('%Y-%m-%d_%H_%M_%S')
             + '.wav')
 
+    info[4] = filename
+
     if (platform.system() == 'Windows'):
         filepath = filepath + '\\' + datetimenow.strftime('%Y-%m-%d')
         if (not os.path.exists(filepath)):
             os.makedirs(filepath)
+        info[3] = filepath
         filepath = filepath + '\\' + filename
     else:
         filepath = filepath + '/' + datetimenow.strftime('%Y-%m-%d')
         if (not os.path.exists(filepath)):
             os.makedirs(filepath)
+        info[3] = filepath
         filepath = filepath + '/' + filename
+    info.append(filepath)
 
     codec = cmd["codec"].lower()
 
@@ -266,8 +312,8 @@ def recThreaded(info):
 
 
 ### Program Start
-host, port, listen, filepath = getOption(sys.argv[1:])
-print('Initialized Options: {0}/{1}/{2}/{3}'.format(host, port, listen, filepath))
+host, port, listen, filepath, dbhost = getOption(sys.argv[1:])
+# print('Initialized Options: {0}/{1}/{2}/{3}/{4}'.format(host, port, listen, filepath, dbhost))
 
 s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 try:
@@ -281,7 +327,7 @@ except OSError as e:
 while not exitFlag:
     con, addr = s.accept()
     print('Got connection from', addr)
-    threading.Thread(target=cmdThreaded, args=(con,filepath,)).start()
+    threading.Thread(target=cmdThreaded, args=(con,filepath,dbhost)).start()
 
     '''
     try:

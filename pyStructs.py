@@ -25,9 +25,10 @@ class RecordStopRequest(object):
         return urlencode(self.request)
 
 class RecordCmd(object):
-    def __init__(self, qs):
+    def __init__(self, qs = ""):
         self.command = {}
-        self.parse(qs)
+        if (qs != ""):
+            self.parse(qs)
 
     def parse(self, qs):
         parsed_url = urlparse(qs)
